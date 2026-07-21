@@ -137,10 +137,19 @@ OUTPUT_FORMAT=os.getenv('param_output_format')
 
 
 # geography data
-geo_join_col = "GEOID" if POPULATION_TYPE == 'TRACT' else "ZCTA5CE10"
+if POPULATION_TYPE == "TRACT":
+    geo_join_col = "GEOID"
+elif POPULATION_TYPE == "ZIP":
+    geo_join_col = "ZCTA5CE10"
+else:
+    raise Exception(f"POPULATION_TYPE should be TRACT or ZIP, got {POPULATION_TYPE}")
 
 # population data
-default_population_join_col = 'FIPS' if POPULATION_TYPE == "TRACT" else "5-digit ZIP Code Tabulation Area"
+default_population_join_col = (
+    "FIPS"
+    if POPULATION_TYPE == "TRACT"
+    else "5-digit ZIP Code Tabulation Area"
+)
 default_population_data_col = "Total Population"
 
 population_join_col = os.getenv("param_population_join_col", "") or default_population_join_col
@@ -199,9 +208,10 @@ def load_geometry() -> gpd.GeoDataFrame:
     """
     if POPULATION_TYPE == "TRACT":
         geometry = gpd.read_file(os.path.join(HEROP_DATA_DIR, "cb_2019_us_tract_500k.shp"))
-        
+
     elif POPULATION_TYPE == "ZIP":
         geometry = gpd.read_file(os.path.join(HEROP_DATA_DIR, "cb_2018_us_zcta510_500k.shp"))
+
     else:
         raise Exception(f"POPULATION_TYPE should be TRACT or ZIP, somehow got {POPULATION_TYPE}")
     geometry = geometry.to_crs("EPSG:4326")
@@ -238,10 +248,6 @@ def load_population() -> gpd.GeoDataFrame:
     if POPULATION_FILENAME == "":
         population = population.iloc[1:]
     # TODO: for now just coercing to int64, revisit later
-    try:
-        population[population_join_col] = population[population_join_col].astype('int64')
-    except Exception as e: 
-        print(f" Error in population[population_join_col] : {e} ")
 
     missing_cols = [
         col for col in [population_join_col, population_data_col]
@@ -253,6 +259,15 @@ def load_population() -> gpd.GeoDataFrame:
             f"Population file is missing required column(s): {missing_cols}. "
             f"Available columns: {list(population.columns)}"
         )
+
+    try:
+        population[population_join_col] = population[population_join_col].astype("int64")
+        
+    except Exception as e:
+        raise ValueError(
+            f"Could not convert population ID column '{population_join_col}' to integers: {e}"
+        )
+
     population = population[[population_join_col, population_data_col]]
     # join to geometry data
     geometry = load_geometry()
@@ -382,7 +397,10 @@ def get_transit_matrix():
                 for _file in pathlib.Path(path).glob("*.parquet")
             )
         else:
-            transit_matrix = pd.read_parquet(path)
+            if path.lower().endswith(".csv"):
+                transit_matrix = pd.read_csv(path)
+            else:
+                transit_matrix = pd.read_parquet(path)
 
     elif POPULATION_TYPE == "TRACT" and MOBILITY_MODE == "DRIVING":
         path = os.path.join(HEROP_DATA_DIR, "US-matrix-TRACT-DRIVING")
@@ -400,7 +418,7 @@ def get_transit_matrix():
         )
         assert os.path.exists(path)
         transit_matrix = pd.read_parquet(path)
-    print(transit_matrix.columns.tolist())
+
     # quick sanity checking/cleaning
     _len = len(transit_matrix)
     transit_matrix = transit_matrix[transit_matrix[matrix_travel_cost_col] >= 0]
@@ -438,6 +456,13 @@ print(len(possible_origins))
 possible_destinations = set(supply[SUPPLY_ID])
 print(len(possible_destinations))
 
+print(f"Travel rows before study-area filtering: {len(transit_matrix)}")
+print(f"Matching origins: {transit_matrix[matrix_join_col_o].isin(possible_origins).sum()}")
+print(f"Matching destinations: {transit_matrix[matrix_join_col_d].isin(possible_destinations).sum()}")
+print(f"Sample travel origins: {transit_matrix[matrix_join_col_o].head().tolist()}")
+print(f"Sample population IDs: {list(possible_origins)[:5]}")
+print(f"Sample travel destinations: {transit_matrix[matrix_join_col_d].head().tolist()}")
+print(f"Sample supply IDs: {list(possible_destinations)[:5]}")
 
 # In[19]:
 
