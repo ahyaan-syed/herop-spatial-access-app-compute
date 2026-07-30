@@ -91,6 +91,7 @@ DATA_FOLDER = os.getenv('data_folder')  # data input from the end user
 # get the appropriate variables, these will be passed by CyberGIS-Compute
 MOBILITY_MODE = os.getenv('param_mobility_mode')
 POPULATION_TYPE = os.getenv('param_population_type')
+ANALYSIS_YEAR = os.getenv("param_analysis_year", "2010")
 POPULATION_FILENAME = os.getenv("param_population_filename", "")
 TRAVEL_MATRIX_FILENAME = os.getenv("param_travel_matrix_filename", "")
 MAX_TRAVEL_TIME = os.getenv('param_max_travel_time')
@@ -104,7 +105,7 @@ SUPPLY_LAT = os.getenv('param_supply_lat')
 SUPPLY_LON = os.getenv('param_supply_lon')
 SUPPLY_ID = os.getenv('param_supply_id')
 
-# OUTPUT FORMA
+# OUTPUT FORMAT
 OUTPUT_FORMAT=os.getenv('param_output_format')
 
 
@@ -138,7 +139,7 @@ OUTPUT_FORMAT=os.getenv('param_output_format')
 
 # geography data
 if POPULATION_TYPE == "TRACT":
-    geo_join_col = "GEOID"
+    geo_join_col = "FIPS"
 elif POPULATION_TYPE == "ZIP":
     geo_join_col = "ZCTA5CE10"
 else:
@@ -207,7 +208,28 @@ def load_geometry() -> gpd.GeoDataFrame:
         Tuple[gpd.GeoDataFrame, List]: (Geometry, list of unique origin IDs)
     """
     if POPULATION_TYPE == "TRACT":
-        geometry = gpd.read_file(os.path.join(HEROP_DATA_DIR, "cb_2019_us_tract_500k.shp"))
+        if ANALYSIS_YEAR == "2010":
+            geometry_path = os.path.join(
+                HEROP_DATA_DIR,
+                "tract-2010-500k-shp.zip"
+            )
+        elif ANALYSIS_YEAR == "2020":
+            geometry_path = os.path.join(
+                HEROP_DATA_DIR,
+                "tract-2020-500k-shp.zip"
+            )
+        else:
+            raise ValueError(
+                f"ANALYSIS_YEAR should be 2010 or 2020, got {ANALYSIS_YEAR}"
+            )
+
+        geometry = gpd.read_file(geometry_path)
+
+        geometry[["summary_level", "FIPS"]] = (
+            geometry["HEROP_ID"].str.split("US", expand=True)
+        )
+
+        geometry["FIPS"] = geometry["FIPS"].astype("int64")
 
     elif POPULATION_TYPE == "ZIP":
         geometry = gpd.read_file(os.path.join(HEROP_DATA_DIR, "cb_2018_us_zcta510_500k.shp"))
@@ -262,7 +284,7 @@ def load_population() -> gpd.GeoDataFrame:
 
     try:
         population[population_join_col] = population[population_join_col].astype("int64")
-        
+
     except Exception as e:
         raise ValueError(
             f"Could not convert population ID column '{population_join_col}' to integers: {e}"
@@ -403,13 +425,31 @@ def get_transit_matrix():
                 transit_matrix = pd.read_parquet(path)
 
     elif POPULATION_TYPE == "TRACT" and MOBILITY_MODE == "DRIVING":
-        path = os.path.join(HEROP_DATA_DIR, "US-matrix-TRACT-DRIVING")
-        assert os.path.exists(path)
+        if ANALYSIS_YEAR == "2010":
+            path = os.path.join(
+                HEROP_DATA_DIR,
+                "US-matrix-TRACT-DRIVING"
+            )
+            assert os.path.exists(path)
 
-        transit_matrix = pd.concat(
-            pd.read_parquet(_file)
-            for _file in pathlib.Path(path).glob("*.parquet")
-        )
+            transit_matrix = pd.concat(
+                pd.read_parquet(_file)
+                for _file in pathlib.Path(path).glob("*.parquet")
+            )
+
+        elif ANALYSIS_YEAR == "2020":
+            path = os.path.join(
+                HEROP_DATA_DIR,
+                "TCM-SVI2022-Drive-192km-90min-round.parquet"
+            )
+            assert os.path.exists(path)
+
+            transit_matrix = pd.read_parquet(path)
+
+        else:
+            raise ValueError(
+                f"ANALYSIS_YEAR should be 2010 or 2020, got {ANALYSIS_YEAR}"
+            )
 
     else:
         path = os.path.join(
@@ -418,6 +458,8 @@ def get_transit_matrix():
         )
         assert os.path.exists(path)
         transit_matrix = pd.read_parquet(path)
+
+    print(f"Travel matrix: {path}")
 
     # quick sanity checking/cleaning
     _len = len(transit_matrix)
@@ -435,7 +477,7 @@ def get_transit_matrix():
 # In[16]:
 
 
-print(f"US-matrix-{POPULATION_TYPE}-{MOBILITY_MODE}.parquet")
+#print(f"US-matrix-{POPULATION_TYPE}-{MOBILITY_MODE}.parquet")
 
 
 # In[17]:
